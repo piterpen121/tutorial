@@ -1,0 +1,115 @@
+select 
+ decode(x.BuhCnt,
+        0,decode(nvl(x.HeadISN,0),
+                 0,'нет',
+                 decode((select status from buhhead where isn=x.HeadISN),
+	                'У','нет',
+	                'есть')),
+        'есть') RrovInfo,
+ x.*
+from 
+(
+select 
+ (select count(*) from buhhead_t where docitemisn in (dt.isn, dh.isn)) buhcnt,
+ nvl(dh.in_id,DocNom) docno,
+ nvl(dh.datedoc, datebeg) datedoc,
+ nvl((select cr.code from aisfin.fdochead ff,currency cr 
+     where ff.isn=dh.isn
+     and cr.isn = ff.currisn and rownum<2), codeM) code,
+ nvl(dt.fobjisn,oHeadIsn) HeadISN, 
+ dt.isn NFSItemIsn,
+ dh.operisn NFSDocTypeIsn, 
+ dh.out_id NFSDocOutNo,
+ x.*
+from
+(
+select --+ordered use_nl(a d c v)
+ unique a.Isn, a.AgrIsn, a.x1 as CondIsn, a.classisn,
+  substr(InitCapfirst(d.shortname),1,40) shortname, a.x2 as Amount, a.DateBeg,
+  a.CurrIsn, c.Code codeM, /*a.x3*/ substr(a.remark,1,250) as DocNom, a.x4 as oHeadIsn, v.x2,
+  decode(:pHasAccCode,1,'26098',
+  decode(v.x2,765630400,'26',765626100,'91',822124901,'08',985351225,'76',967713825,'97','')) as DBuhCode,
+  decode(:pHasAccCode,1,'76134','60') as CBuhCode,
+  (select dt.isn 
+   from 
+     aisfin.fDocHead dh, aisfin.fDocItems dt
+   where
+     dh.statusisn<>c.get('STDOC_DEL')
+     and dt.docisn = dh.isn
+     and ( a.classisn = c.get('DTBUHREF') and dt.relisn = a.isn and dh.fobjisn=a.x1 
+       or a.classisn <> c.get('DTBUHREF')
+           and dh.operisn = a.classisn
+           and dt.isn = a.x3
+           and( a.classisn not in( c.get('cfdoc_additional'), c.get('CFDOC_RPB_NN')) and dt.condisn=a.x1
+             or a.classisn in( c.get('cfdoc_additional'), c.get('CFDOC_RPB_NN'))
+             )
+          /* and dt.condisn=a.x1 /*condisn*/ )
+     and rownum<2
+   ) dtIsn,
+   rtrim(substr(AGRV_Docs2Conds(:AgrIsn, :AddIsn),1,250)) Docs2Conds,
+   round(GETCROSSCOVER(a.x2,a.CurrIsn, 35, decode(a.DateBeg,null,sysdate,a.DateBeg)),2)  SumRub, 1 sort, a.x5 NFSDocIsn
+ from agrext a, dicti d, currency c, agrext v--, dicti r
+  where a.agrisn = :AddIsn
+    and a.x1 = :Isn   --isn cond_a
+    and a.Classisn = d.isn
+    and a.classisn in 
+       (select isn from dicti start with isn=c.get('DTREPDOC') connect by prior isn=parentisn and active is not null
+         union all
+         select isn from dicti where isn in (select classisn1 from dicX where classisn = c.get('FCX_AGR_DOCTYPE'))
+        )
+    and a.currIsn = c.Isn(+)
+    and a.agrisn = v.agrisn(+)
+    and v.classisn(+) = c.get('dtVizaXozuBU')
+    and (a.Isn = :pAgrExtIsn or nvl( :pAgrExtIsn,0)=0)
+ UNION ALL
+  select --+ordered use_nl(a d c v)
+ unique a.Isn, a.AgrIsn, a.x1 as CondIsn, a.classisn,
+  substr(InitCapfirst(d.shortname),1,40) shortname, a.x2 as Amount, a.DateBeg,
+  a.CurrIsn, c.Code codeM, /*a.x3*/ substr(a.remark,1,250) as DocNom, a.x4 as oHeadIsn, v.x2,
+  decode(:pHasAccCode,1,'26098',
+  decode(v.x2,765630400,'26',765626100,'91',822124901,'08',985351225,'76',967713825,'97','')) as DBuhCode,
+  decode(:pHasAccCode,1,'76134','60', '68') as CBuhCode,
+  a.x3 DtIsn,
+   rtrim(substr(ais.AGRV_Docs2Conds(:AgrISN, :AddISN),1,250)) Docs2Conds,
+   round(ais.GETCROSSCOVER(a.x2,a.CurrIsn, 35, decode(a.DateBeg,null,sysdate,a.DateBeg)),2)  SumRub, 1 sort, a.x5 NFSDocIsn
+ from agrext a, dicti d, currency c, agrext v--, dicti r
+  where a.agrisn = :AddISn
+    and a.x1 = :Isn   --isn cond_a
+    and a.Classisn = d.isn
+    and a.classisn = c.get('CFDOC_NACH')
+    and a.currIsn = c.Isn(+)
+    and a.agrisn = v.agrisn(+)
+    and v.classisn(+) = c.get('dtVizaXozuBU')
+    and (a.Isn = :pAgrExtIsn or nvl(:pAgrExtIsn,0)=0) 
+ UNION ALL
+ --проводки на суммовые разницы
+ select --+ ordered use_nl(d l)
+       to_number(null) as Isn, 
+       to_number(:ADDIsn) as  AgrIsn, 
+       to_number(:Isn) as CondIsn, 1141729803 classisn,
+       'Суммовая разница' shortname, l.objisn as Amount, d.signed /*trunc(sysdate)*/,
+       35 CurrIsn, '' Code, /*to_number(null)*/ '' as DocNo, to_number(null) as oHeadIsn, 0  x2,
+       decode(l.param,-1/*0*/,'60001','91716') as DBuhCode,
+       decode(l.param,-2/*1*/,'60001','91716') as CBuhCode,
+       /*'нет' ProvInfo,*/
+       to_number(null) dtBuhHisn,
+       rtrim(substr(AGRV_Docs2Conds(:AgrIsn, :AddIsn),1,250)) Docs2Conds,
+       l.objisn as SumRub, 2 sort, to_number(null)
+    from listisn l,
+       ( select --+ ordered use_nl(k ds d)
+             d.signed
+             from listisn k, docsum ds, docs d
+               where k.TaskIsn = :pTaskIsn
+                 and nvl(k.param,0) >= 0  ---is null
+                 and k.objisn = ds.isn
+                 and ds.docisn = d.isn
+                 and rownum < 2
+         )d
+        where l.TaskIsn = :pTaskIsn
+          and nvl(l.param,0) < 0 ---- is not null
+order by sort asc, datebeg desc
+) x, aisfin.fDocItems dt, aisfin.fDocHead dh
+where 
+ dt.isn(+) = dtIsn
+ and dh.isn(+) = dt.docisn
+) x
